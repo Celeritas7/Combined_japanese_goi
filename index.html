@@ -163,7 +163,7 @@
             const to = from + pageSize - 1;
             
             const { data, error } = await supabase
-              .from('vocabulary_master')
+              .from('vocabulary')
               .select('*')  // Select all columns
               .range(from, to)
               .order('id');
