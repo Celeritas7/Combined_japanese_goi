@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>JLPT 語彙マスター</title>
+  
+  <meta name="theme-color" content="#1e293b">
+  <meta name="description" content="JLPT N1/N2/N3 Vocabulary Study App">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="JLPT語彙">
+  
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23059669' rx='20' width='100' height='100'/><text x='50' y='40' font-size='20' text-anchor='middle' fill='white' font-weight='bold'>JLPT</text><text x='50' y='70' font-size='30' text-anchor='middle' fill='white' font-weight='bold'>語彙</text></svg>">
+  
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <style>
+    * { font-family: 'Noto Sans JP', system-ui, sans-serif; }
+    body { overscroll-behavior: none; }
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes slideUp { from { opacity: 0; transform: translateY(100%); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .animate-fadeIn { animation: fadeIn 0.3s ease-out; }
+    .animate-slideUp { animation: slideUp 0.3s ease-out; }
+    .animate-pulse { animation: pulse 1.5s infinite; }
+    input, select, button { font-size: 16px; }
+    
+    @media print {
+      body { background: white !important; }
+      .no-print { display: none !important; }
+      .print-table th, .print-table td { border: 1px solid #333 !important; padding: 4px 8px !important; }
+    }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+  <div id="app"></div>
+
+  <script type="module">
+    // ===== SUPABASE CONFIG =====
+    const SUPABASE_URL = 'https://ulgrfumbwjovbjzjiems.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVsZ3JmdW1id2pvdmJqemppZW1zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczNzIyNjcsImV4cCI6MjA4Mjk0ODI2N30.ix5Vh4Y3GXNbQbzVtTD_WSko0L3cr5q_eCnTuDEMh7M';
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    
+    // ===== LEVEL COLORS =====
+    const LEVEL_COLORS = {
+      'N1': { bg: 'bg-rose-500', light: 'bg-rose-100', text: 'text-rose-700', border: 'border-rose-400' },
+      'N2': { bg: 'bg-amber-500', light: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-400' },
+      'N3': { bg: 'bg-emerald-500', light: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-400' },
+      'ALL': { bg: 'bg-slate-700', light: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-400' },
+    };
+    
+    // ===== MARKING CATEGORIES =====
+    const MARKING_CATEGORIES = {
+      0: { label: 'Not marked', color: 'bg-gray-100 text-gray-600', border: 'border-gray-200', icon: '○' },
+      1: { label: 'Monthly Review', color: 'bg-emerald-100 text-emerald-700', border: 'border-emerald-400', icon: '✓' },
+      2: { label: "Can't use in conversation", color: 'bg-violet-100 text-violet-700', border: 'border-violet-400', icon: '💬' },
+      3: { label: "Can't write", color: 'bg-orange-100 text-orange-700', border: 'border-orange-400', icon: '✍' },
+      4: { label: 'Understand but cannot use', color: 'bg-pink-100 text-pink-700', border: 'border-pink-400', icon: '🤔' },
+      5: { label: "Don't know at all", color: 'bg-red-200 text-red-800', border: 'border-red-500', icon: '❌' },
+    };
+    
+    // ===== PAGE TO WEEK/DAY MAPPING =====
+    function getWeekDay(pageNo) {
+      const page = parseInt(pageNo) || 0;
+      if (page < 12) return { week: 1, day: 1, label: '1週1日' };
+      const adjustedPage = page - 12;
+      const dayIndex = Math.floor(adjustedPage / 2);
+      const week = Math.floor(dayIndex / 7) + 1;
+      const day = (dayIndex % 7) + 1;
+      return { week, day, label: `${week}週${day}日` };
+    }
+    
+    // ===== MAIN APP =====
+    class JLPTVocabApp {
+      constructor() {
+        this.user = null;
+        this.data = [];
+        this.markings = {};
+        this.selectedLevel = null; // null = show level selector
+        this.view = 'print-grid';
+        this.searchTerm = '';
+        this.filterWeek = null;
+        this.filterDay = null;
+        this.filterMarking = null;
+        this.showMarkedOnly = false;
+        this.flashcardIndex = 0;
+        this.flashcardRevealed = false;
+        this.selectedWord = null;
+        this.syncing = false;
+        this.loading = true;
+        this.showProfileMenu = false;
+        this.printColumns = 4;
+        this.dataLoaded = false;
+        
+        this.init();
+      }
+      
+      async init() {
+        this.render();
+        
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) this.user = session.user;
+        
+        supabase.auth.onAuthStateChange((event, session) => {
+          this.user = session?.user || null;
+          if (event === 'SIGNED_IN') {
+            this.loadVocabularyData();
+            this.syncMarkingsFromCloud();
+          }
+          this.render();
+        });
+        
+        if (this.user) {
+          await this.loadVocabularyData();
+          await this.syncMarkingsFromCloud();
+        }
+        
+        this.loading = false;
+        this.render();
+      }
+      
+      // ===== AUTH =====
+      async signInWithGoogle() {
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: { redirectTo: window.location.origin + window.location.pathname }
+        });
+        if (error) alert('Login failed: ' + error.message);
+      }
+      
+      async signOut() {
+        await supabase.auth.signOut();
+        this.user = null;
+        this.showProfileMenu = false;
+        this.selectedLevel = null;
+        this.render();
+      }
+      
+      // ===== DATA LOADING FROM SUPABASE =====
+      async loadVocabularyData() {
+        try {
+          this.syncing = true;
+          this.render();
+          
+          const { data, error } = await supabase
+            .from('vocabulary_master')
+            .select('*')
+            .order('id');
+          
+          if (error) throw error;
+          
+          this.data = data.map(row => ({
+            ...row,
+            weekDayLabel: getWeekDay(row.page_no).label,
+            week: getWeekDay(row.page_no).week,
+            day: getWeekDay(row.page_no).day,
+          }));
+          
+          this.dataLoaded = true;
+          this.syncing = false;
+          this.render();
+        } catch (err) {
+          console.error('Load data error:', err);
+          this.syncing = false;
+          this.render();
+        }
+      }
+      
+      // ===== MARKINGS SYNC =====
+      async syncMarkingsFromCloud() {
+        if (!this.user) return;
+        try {
+          const { data, error } = await supabase
+            .from('user_markings')
+            .select('word_id, marking')
+            .eq('user_id', this.user.id);
+          
+          if (error) throw error;
+          if (data) {
+            data.forEach(row => { this.markings[row.word_id] = row.marking; });
+          }
+          this.render();
+        } catch (err) {
+          console.error('Sync markings error:', err);
+        }
+      }
+      
+      async updateMarking(wordId, marking) {
+        this.markings[wordId] = marking;
+        this.render();
+        
+        if (!this.user) return;
+        try {
+          await supabase.from('user_markings').upsert({
+            user_id: this.user.id,
+            word_id: wordId,
+            marking: marking,
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'user_id,word_id' });
+        } catch (err) {
+          console.error('Update marking error:', err);
+        }
+      }
+      
+      // ===== FILTERING =====
+      getFilteredData() {
+        return this.data.filter(word => {
+          // Level filter
+          if (this.selectedLevel && this.selectedLevel !== 'ALL' && word.level !== this.selectedLevel) return false;
+          
+          // Search
+          if (this.searchTerm) {
+            const term = this.searchTerm.toLowerCase();
+            const matches = (word.kanji || '').toLowerCase().includes(term) ||
+              (word.hiragana || '').toLowerCase().includes(term) ||
+              (word.meaning || '').toLowerCase().includes(term) ||
+              (word.raw || '').toLowerCase().includes(term);
+            if (!matches) return false;
+          }
+          
+          // Week/Day filters
+          if (this.filterWeek && word.week !== this.filterWeek) return false;
+          if (this.filterDay && word.day !== this.filterDay) return false;
+          
+          // Marking filter
+          const wordMarking = this.markings[word.id] || 0;
+          if (this.filterMarking !== null && wordMarking !== this.filterMarking) return false;
+          if (this.showMarkedOnly && wordMarking === 0) return false;
+          
+          return true;
+        });
+      }
+      
+      getWeeks() {
+        const filtered = this.selectedLevel && this.selectedLevel !== 'ALL' 
+          ? this.data.filter(w => w.level === this.selectedLevel)
+          : this.data;
+        return [...new Set(filtered.map(w => w.week))].sort((a, b) => a - b);
+      }
+      
+      getStats() {
+        const filtered = this.selectedLevel && this.selectedLevel !== 'ALL'
+          ? this.data.filter(w => w.level === this.selectedLevel)
+          : this.data;
+        
+        const stats = { total: filtered.length, marked: 0, byMark: {} };
+        Object.keys(MARKING_CATEGORIES).forEach(k => stats.byMark[k] = 0);
+        
+        filtered.forEach(w => {
+          const m = this.markings[w.id] || 0;
+          stats.byMark[m]++;
+          if (m > 0) stats.marked++;
+        });
+        
+        return stats;
+      }
+      
+      printPage() { window.print(); }
+      
+      // ===== RENDER =====
+      render() {
+        const app = document.getElementById('app');
+        
+        if (this.loading) {
+          app.innerHTML = `
+            <div class="min-h-screen flex items-center justify-center bg-slate-900">
+              <div class="text-center">
+                <div class="w-20 h-20 bg-gradient-to-br from-emerald-500 to-teal-500 rounded-2xl flex items-center justify-center text-white mx-auto mb-4">
+                  <span class="text-sm font-bold">JLPT</span>
+                </div>
+                <p class="text-white animate-pulse">Loading...</p>
+              </div>
+            </div>`;
+          return;
+        }
+        
+        if (!this.user) {
+          app.innerHTML = this.renderLoginScreen();
+          return;
+        }
+        
+        if (!this.selectedLevel) {
+          app.innerHTML = this.renderLevelSelector();
+          return;
+        }
+        
+        app.innerHTML = this.renderMainApp();
+      }
+      
+      renderLoginScreen() {
+        return `
+          <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
+            <div class="w-full max-w-sm">
+              <div class="text-center mb-8">
+                <div class="w-24 h-24 bg-gradient-to-br from-emerald-500 to-teal-500 rounded-2xl flex flex-col items-center justify-center text-white mx-auto mb-4 shadow-lg">
+                  <span class="text-sm font-bold">JLPT</span>
+                  <span class="text-2xl font-bold">語彙</span>
+                </div>
+                <h1 class="text-2xl font-bold text-white mb-2">JLPT 語彙マスター</h1>
+                <p class="text-slate-400">N1 • N2 • N3 Vocabulary Study</p>
+              </div>
+              
+              <div class="bg-white rounded-2xl p-6 shadow-xl">
+                <h2 class="text-lg font-semibold text-gray-800 mb-4 text-center">Sign in to start learning</h2>
+                <button onclick="app.signInWithGoogle();" class="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white border-2 border-slate-200 rounded-xl hover:bg-slate-50 transition-all">
+                  <svg class="w-5 h-5" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                  </svg>
+                  <span class="font-medium text-gray-700">Continue with Google</span>
+                </button>
+              </div>
+            </div>
+          </div>`;
+      }
+      
+      renderLevelSelector() {
+        const n1Count = this.data.filter(w => w.level === 'N1').length;
+        const n2Count = this.data.filter(w => w.level === 'N2').length;
+        const n3Count = this.data.filter(w => w.level === 'N3').length;
+        
+        return `
+          <div class="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">
+            <div class="max-w-md mx-auto pt-8">
+              <div class="text-center mb-8">
+                <div class="w-20 h-20 bg-gradient-to-br from-emerald-500 to-teal-500 rounded-2xl flex flex-col items-center justify-center text-white mx-auto mb-4">
+                  <span class="text-xs font-bold">JLPT</span>
+                  <span class="text-xl font-bold">語彙</span>
+                </div>
+                <h1 class="text-2xl font-bold text-white mb-2">Choose Your Level</h1>
+                <p class="text-slate-400">${this.data.length} total words loaded</p>
+              </div>
+              
+              <div class="space-y-4">
+                <button onclick="app.selectedLevel = 'N1'; app.render();" class="w-full p-6 bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all text-left group">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-4">
+                      <div class="w-14 h-14 bg-rose-500 rounded-xl flex items-center justify-center text-white text-xl font-bold">N1</div>
+                      <div>
+                        <h3 class="text-xl font-bold text-gray-800">JLPT N1</h3>
+                        <p class="text-gray-500">${n1Count} words • Advanced</p>
+                      </div>
+                    </div>
+                    <span class="text-2xl group-hover:translate-x-1 transition-transform">→</span>
+                  </div>
+                </button>
+                
+                <button onclick="app.selectedLevel = 'N2'; app.render();" class="w-full p-6 bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all text-left group">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-4">
+                      <div class="w-14 h-14 bg-amber-500 rounded-xl flex items-center justify-center text-white text-xl font-bold">N2</div>
+                      <div>
+                        <h3 class="text-xl font-bold text-gray-800">JLPT N2</h3>
+                        <p class="text-gray-500">${n2Count} words • Upper Intermediate</p>
+                      </div>
+                    </div>
+                    <span class="text-2xl group-hover:translate-x-1 transition-transform">→</span>
+                  </div>
+                </button>
+                
+                <button onclick="app.selectedLevel = 'N3'; app.render();" class="w-full p-6 bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all text-left group">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-4">
+                      <div class="w-14 h-14 bg-emerald-500 rounded-xl flex items-center justify-center text-white text-xl font-bold">N3</div>
+                      <div>
+                        <h3 class="text-xl font-bold text-gray-800">JLPT N3</h3>
+                        <p class="text-gray-500">${n3Count} words • Intermediate</p>
+                      </div>
+                    </div>
+                    <span class="text-2xl group-hover:translate-x-1 transition-transform">→</span>
+                  </div>
+                </button>
+                
+                <button onclick="app.selectedLevel = 'ALL'; app.render();" class="w-full p-6 bg-slate-700 rounded-2xl shadow-lg hover:shadow-xl transition-all text-left group">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-4">
+                      <div class="w-14 h-14 bg-slate-600 rounded-xl flex items-center justify-center text-white text-lg font-bold">ALL</div>
+                      <div>
+                        <h3 class="text-xl font-bold text-white">All Levels Combined</h3>
+                        <p class="text-slate-400">${this.data.length} words • N1 + N2 + N3</p>
+                      </div>
+                    </div>
+                    <span class="text-2xl text-white group-hover:translate-x-1 transition-transform">→</span>
+                  </div>
+                </button>
+              </div>
+              
+              <div class="mt-8 text-center">
+                <button onclick="app.signOut();" class="text-slate-400 hover:text-white transition-colors">
+                  Sign out (${this.user?.email || ''})
+                </button>
+              </div>
+            </div>
+          </div>`;
+      }
+      
+      renderMainApp() {
+        const filteredData = this.getFilteredData();
+        const weeks = this.getWeeks();
+        const stats = this.getStats();
+        const levelColor = LEVEL_COLORS[this.selectedLevel] || LEVEL_COLORS['ALL'];
+        
+        return `
+          <header class="bg-slate-900 text-white sticky top-0 z-40 shadow-xl no-print">
+            <div class="max-w-7xl mx-auto px-3 py-3">
+              <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-2">
+                  <button onclick="app.selectedLevel = null; app.render();" class="w-10 h-10 ${levelColor.bg} rounded-xl flex items-center justify-center text-white font-bold hover:opacity-80 transition-opacity">
+                    ${this.selectedLevel === 'ALL' ? '全' : this.selectedLevel}
+                  </button>
+                  <div>
+                    <h1 class="text-lg font-bold">${this.selectedLevel === 'ALL' ? 'All Levels' : this.selectedLevel} 語彙マスター</h1>
+                    <p class="text-xs text-slate-400">${stats.marked}/${stats.total} marked ${this.syncing ? '⟳' : '☁️'}</p>
+                  </div>
+                </div>
+                
+                <div class="flex items-center gap-2">
+                  <button onclick="app.printPage();" class="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg">🖨️</button>
+                  <div class="relative">
+                    <button onclick="app.showProfileMenu = !app.showProfileMenu; app.render();" class="flex items-center gap-1 p-1 bg-slate-700 hover:bg-slate-600 rounded-lg">
+                      <img src="${this.user?.user_metadata?.avatar_url || ''}" class="w-7 h-7 rounded-lg" onerror="this.style.display='none'">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    ${this.showProfileMenu ? `
+                      <div class="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-xl z-50 animate-fadeIn overflow-hidden">
+                        <div class="p-3 bg-slate-50 border-b">
+                          <p class="font-medium text-gray-900 truncate">${this.user?.user_metadata?.full_name || 'User'}</p>
+                          <p class="text-xs text-gray-500 truncate">${this.user?.email}</p>
+                        </div>
+                        <div class="p-2">
+                          <button onclick="app.selectedLevel = null; app.showProfileMenu = false; app.render();" class="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 rounded-lg">🔄 Change Level</button>
+                          <button onclick="app.syncMarkingsFromCloud(); app.showProfileMenu = false;" class="w-full px-3 py-2 text-left text-sm hover:bg-slate-100 rounded-lg">☁️ Sync Now</button>
+                          <button onclick="app.signOut();" class="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 rounded-lg">🚪 Sign Out</button>
+                        </div>
+                      </div>
+                    ` : ''}
+                  </div>
+                </div>
+              </div>
+              
+              <nav class="flex gap-1 overflow-x-auto hide-scrollbar pb-1">
+                ${['print-grid', 'print-study', 'database', 'flashcard'].map(v => `
+                  <button onclick="app.view = '${v}'; app.showProfileMenu = false; app.render();" class="px-3 py-1.5 rounded-lg text-sm whitespace-nowrap transition-colors ${this.view === v ? 'bg-white text-slate-900' : 'bg-slate-800 hover:bg-slate-700'}">
+                    ${v === 'print-grid' ? '📋 Grid' : v === 'print-study' ? '📝 Study' : v === 'database' ? '📖 List' : '🔄 Flash'}
+                  </button>
+                `).join('')}
+              </nav>
+            </div>
+          </header>
+          
+          <div class="bg-white border-b sticky top-[104px] z-30 shadow-sm no-print">
+            <div class="max-w-7xl mx-auto px-3 py-2">
+              <div class="flex flex-wrap items-center gap-2">
+                <div class="relative flex-1 min-w-[140px]">
+                  <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                  <input type="text" placeholder="Search..." value="${this.searchTerm}" oninput="app.searchTerm = this.value; app.render();" class="w-full pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-slate-400">
+                </div>
+                
+                <select onchange="app.filterWeek = this.value ? parseInt(this.value) : null; app.render();" class="px-3 py-2 border rounded-xl text-sm bg-white">
+                  <option value="">All Weeks</option>
+                  ${weeks.map(w => `<option value="${w}" ${this.filterWeek === w ? 'selected' : ''}>Week ${w}</option>`).join('')}
+                </select>
+                
+                <select onchange="app.filterMarking = this.value !== '' ? parseInt(this.value) : null; app.render();" class="px-3 py-2 border rounded-xl text-sm bg-white">
+                  <option value="">All Marks</option>
+                  ${Object.entries(MARKING_CATEGORIES).map(([k, v]) => `<option value="${k}" ${this.filterMarking === parseInt(k) ? 'selected' : ''}>${v.icon} ${v.label}</option>`).join('')}
+                </select>
+                
+                <button onclick="app.showMarkedOnly = !app.showMarkedOnly; app.render();" class="px-3 py-2 rounded-xl text-sm ${this.showMarkedOnly ? 'bg-slate-800 text-white' : 'bg-slate-100 hover:bg-slate-200'}">
+                  ${this.showMarkedOnly ? '👁' : '👁‍🗨'} Marked
+                </button>
+                
+                <span class="text-xs text-gray-500">${filteredData.length}</span>
+              </div>
+            </div>
+          </div>
+          
+          <main class="max-w-7xl mx-auto px-3 py-4 pb-24" onclick="app.showProfileMenu = false;">
+            ${this.view === 'print-grid' ? this.renderPrintGrid(filteredData) : ''}
+            ${this.view === 'print-study' ? this.renderPrintStudy(filteredData) : ''}
+            ${this.view === 'database' ? this.renderDatabase(filteredData) : ''}
+            ${this.view === 'flashcard' ? this.renderFlashcard(filteredData) : ''}
+          </main>
+          
+          <div class="fixed bottom-0 left-0 right-0 bg-white border-t p-2 z-30 md:hidden no-print">
+            <div class="flex justify-around text-xs">
+              ${Object.entries(MARKING_CATEGORIES).slice(1).map(([k, v]) => `
+                <button onclick="event.stopPropagation(); app.filterMarking = app.filterMarking === ${k} ? null : ${k}; app.render();" class="flex flex-col items-center p-1 rounded ${this.filterMarking === parseInt(k) ? 'bg-slate-200' : ''}">
+                  <span class="text-lg">${v.icon}</span>
+                </button>
+              `).join('')}
+            </div>
+          </div>
+          
+          ${this.selectedWord ? this.renderWordModal() : ''}
+        `;
+      }
+      
+      renderPrintGrid(data) {
+        if (!data.length) return '<div class="text-center py-20 text-gray-500">No words found.</div>';
+        
+        const grouped = {};
+        data.forEach(w => {
+          const key = w.weekDayLabel;
+          if (!grouped[key]) grouped[key] = [];
+          grouped[key].push(w);
+        });
+        
+        const sortedLabels = Object.keys(grouped).sort((a, b) => {
+          const [aW, aD] = a.match(/(\d+)週(\d+)日/)?.slice(1).map(Number) || [0, 0];
+          const [bW, bD] = b.match(/(\d+)週(\d+)日/)?.slice(1).map(Number) || [0, 0];
+          return aW - bW || aD - bD;
+        });
+        
+        return `
+          <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full print-table border-collapse text-sm">
+                <thead>
+                  <tr class="bg-slate-100">
+                    <th class="border p-2 text-center font-bold w-20">週日</th>
+                    ${[1,2,3,4].map(i => `<th class="border p-2 text-center font-bold">${i}</th>`).join('')}
+                  </tr>
+                </thead>
+                <tbody>
+                  ${sortedLabels.map(label => {
+                    const words = grouped[label];
+                    const rows = Math.ceil(words.length / 4);
+                    return Array.from({ length: rows }).map((_, ri) => `
+                      <tr>
+                        ${ri === 0 ? `<td class="border p-2 text-center font-medium bg-blue-50" rowspan="${rows}">${label}</td>` : ''}
+                        ${[0,1,2,3].map(ci => {
+                          const w = words[ri * 4 + ci];
+                          if (!w) return '<td class="border p-2"></td>';
+                          const m = this.markings[w.id] || 0;
+                          const mc = MARKING_CATEGORIES[m];
+                          return `<td class="border p-2 cursor-pointer hover:bg-slate-100 ${m > 0 ? mc.color : ''}" onclick="app.selectedWord = app.data.find(x => x.id === ${w.id}); app.render();">${w.kanji || w.raw}</td>`;
+                        }).join('')}
+                      </tr>
+                    `).join('');
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>`;
+      }
+      
+      renderPrintStudy(data) {
+        if (!data.length) return '<div class="text-center py-20 text-gray-500">No words found.</div>';
+        
+        return `
+          <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+            <table class="w-full border-collapse">
+              <thead>
+                <tr class="bg-slate-800 text-white text-sm">
+                  <th class="border p-2 w-16">週日</th>
+                  <th class="border p-2">Context 1</th>
+                  <th class="border p-2 text-xl">Kanji</th>
+                  <th class="border p-2">Context 2</th>
+                  <th class="border p-2">Meaning</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${data.slice(0, 200).map((w, i) => {
+                  const m = this.markings[w.id] || 0;
+                  const mc = MARKING_CATEGORIES[m];
+                  return `
+                    <tr class="${i % 2 ? 'bg-slate-50' : ''} ${m > 0 ? mc.color : ''} cursor-pointer hover:bg-slate-100" onclick="app.selectedWord = app.data.find(x => x.id === ${w.id}); app.render();">
+                      <td class="border p-2 text-xs text-center">${w.weekDayLabel}</td>
+                      <td class="border p-2 text-sm text-gray-600">${w.supporting_word_1 || ''}</td>
+                      <td class="border p-3 text-center text-2xl font-bold">${w.kanji || w.raw}</td>
+                      <td class="border p-2 text-sm text-gray-600">${w.supporting_word_2 || ''}</td>
+                      <td class="border p-2 text-sm">${w.meaning || ''}</td>
+                    </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+            ${data.length > 200 ? '<p class="text-center text-gray-500 py-4">Showing first 200...</p>' : ''}
+          </div>`;
+      }
+      
+      renderDatabase(data) {
+        if (!data.length) return '<div class="text-center py-20 text-gray-500">No words found.</div>';
+        
+        return `<div class="space-y-2">
+          ${data.slice(0, 100).map(w => {
+            const m = this.markings[w.id] || 0;
+            const mc = MARKING_CATEGORIES[m];
+            const lc = LEVEL_COLORS[w.level];
+            return `
+              <div class="p-3 rounded-xl border-2 ${mc.border} ${mc.color} cursor-pointer hover:shadow-md" onclick="app.selectedWord = app.data.find(x => x.id === ${w.id}); app.render();">
+                <div class="flex items-start justify-between gap-2">
+                  <div class="flex-1">
+                    <div class="flex items-center gap-2 mb-1 flex-wrap">
+                      <span class="px-1.5 py-0.5 ${lc.bg} text-white text-xs rounded">${w.level}</span>
+                      <span class="text-xl font-bold">${w.kanji || w.raw}</span>
+                      <span class="text-gray-600">${w.hiragana || ''}</span>
+                    </div>
+                    <p class="text-sm text-gray-700 truncate">${w.meaning || ''}</p>
+                  </div>
+                  <div class="flex gap-1">
+                    ${[1,2,3,4,5].map(mk => `
+                      <button onclick="event.stopPropagation(); app.updateMarking(${w.id}, ${m === mk ? 0 : mk});" class="w-7 h-7 rounded-lg flex items-center justify-center text-sm ${m === mk ? MARKING_CATEGORIES[mk].color + ' ring-2 ring-gray-400' : 'bg-white/50 hover:bg-white'}">
+                        ${MARKING_CATEGORIES[mk].icon}
+                      </button>
+                    `).join('')}
+                  </div>
+                </div>
+              </div>`;
+          }).join('')}
+          ${data.length > 100 ? '<p class="text-center text-gray-500 py-4">Showing first 100...</p>' : ''}
+        </div>`;
+      }
+      
+      renderFlashcard(data) {
+        if (!data.length) return '<div class="text-center py-20 text-gray-500">No words found.</div>';
+        
+        if (this.flashcardIndex >= data.length) this.flashcardIndex = 0;
+        const w = data[this.flashcardIndex];
+        const m = this.markings[w.id] || 0;
+        const mc = MARKING_CATEGORIES[m];
+        
+        return `
+          <div class="max-w-lg mx-auto">
+            <div class="text-center mb-4 text-gray-500 text-sm">Card ${this.flashcardIndex + 1} / ${data.length}</div>
+            
+            <div class="min-h-[320px] p-6 rounded-3xl border-2 ${mc.border} bg-white shadow-xl cursor-pointer" onclick="app.flashcardRevealed = !app.flashcardRevealed; app.render();">
+              <div class="flex justify-between mb-4">
+                <span class="px-2 py-1 ${LEVEL_COLORS[w.level].bg} text-white text-xs rounded-full">${w.level}</span>
+                <div class="flex gap-1">
+                  ${[1,2,3,4,5].map(mk => `
+                    <button onclick="event.stopPropagation(); app.updateMarking(${w.id}, ${m === mk ? 0 : mk});" class="w-8 h-8 rounded-xl ${m === mk ? MARKING_CATEGORIES[mk].color + ' ring-2 ring-gray-400' : 'bg-gray-100 hover:bg-gray-200'}">
+                      ${MARKING_CATEGORIES[mk].icon}
+                    </button>
+                  `).join('')}
+                </div>
+              </div>
+              
+              <div class="text-center py-6">
+                ${w.supporting_word_1 ? `<p class="text-gray-400 mb-2">${w.supporting_word_1}</p>` : ''}
+                <h2 class="text-5xl font-bold mb-2">${w.kanji || w.raw}</h2>
+                ${w.supporting_word_2 ? `<p class="text-gray-400">${w.supporting_word_2}</p>` : ''}
+                
+                ${this.flashcardRevealed ? `
+                  <div class="mt-6 pt-6 border-t-2 border-dashed animate-fadeIn">
+                    <p class="text-xl text-gray-600 mb-2">${w.hiragana || ''}</p>
+                    <p class="text-lg">${w.meaning || ''}</p>
+                    ${w.hint ? `<p class="mt-3 text-gray-500 text-sm">💡 ${w.hint}</p>` : ''}
+                  </div>
+                ` : '<p class="text-gray-400 mt-6">Tap to reveal</p>'}
+              </div>
+            </div>
+            
+            <div class="flex justify-center gap-3 mt-6">
+              <button onclick="app.flashcardIndex = Math.max(0, app.flashcardIndex - 1); app.flashcardRevealed = false; app.render();" class="p-3 rounded-xl bg-slate-100 hover:bg-slate-200">◀</button>
+              <button onclick="app.flashcardIndex = Math.floor(Math.random() * ${data.length}); app.flashcardRevealed = false; app.render();" class="px-5 py-3 rounded-xl bg-slate-800 text-white">Random</button>
+              <button onclick="app.flashcardIndex = Math.min(${data.length - 1}, app.flashcardIndex + 1); app.flashcardRevealed = false; app.render();" class="p-3 rounded-xl bg-slate-100 hover:bg-slate-200">▶</button>
+            </div>
+          </div>`;
+      }
+      
+      renderWordModal() {
+        const w = this.selectedWord;
+        const m = this.markings[w.id] || 0;
+        const mc = MARKING_CATEGORIES[m];
+        const lc = LEVEL_COLORS[w.level];
+        
+        return `
+          <div class="fixed inset-0 bg-black/50 flex items-end md:items-center justify-center z-50 p-0 md:p-4 no-print" onclick="app.selectedWord = null; app.render();">
+            <div class="bg-white rounded-t-3xl md:rounded-3xl w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-2xl animate-slideUp" onclick="event.stopPropagation();">
+              <div class="p-5 ${mc.color} rounded-t-3xl sticky top-0">
+                <div class="flex justify-between">
+                  <div>
+                    <div class="flex items-center gap-2 mb-1">
+                      <span class="px-2 py-0.5 ${lc.bg} text-white text-xs rounded">${w.level}</span>
+                      <span class="text-sm opacity-75">${w.weekDayLabel}</span>
+                    </div>
+                    <h2 class="text-3xl font-bold">${w.kanji || w.raw}</h2>
+                    <p class="text-lg">${w.hiragana || ''}</p>
+                  </div>
+                  <button onclick="app.selectedWord = null; app.render();" class="p-2 hover:bg-black/10 rounded-xl">✕</button>
+                </div>
+              </div>
+              
+              <div class="p-5 space-y-4">
+                <div>
+                  <h3 class="text-sm font-medium text-gray-500 mb-1">Meaning</h3>
+                  <p>${w.meaning || '-'}</p>
+                </div>
+                ${w.hint ? `<div><h3 class="text-sm font-medium text-gray-500 mb-1">Hint</h3><p>💡 ${w.hint}</p></div>` : ''}
+                ${w.sentence ? `<div><h3 class="text-sm font-medium text-gray-500 mb-1">Example</h3><p class="p-3 bg-slate-50 rounded-xl">📝 ${w.sentence}</p></div>` : ''}
+                
+                <div>
+                  <h3 class="text-sm font-medium text-gray-500 mb-2">Mark as</h3>
+                  <div class="grid grid-cols-2 gap-2">
+                    ${Object.entries(MARKING_CATEGORIES).map(([k, v]) => `
+                      <button onclick="app.updateMarking(${w.id}, ${parseInt(k)}); app.selectedWord = app.data.find(x => x.id === ${w.id});" class="p-2.5 rounded-xl text-left text-sm ${m === parseInt(k) ? v.color + ' ring-2 ring-gray-400' : 'bg-gray-100 hover:bg-gray-200'}">
+                        ${v.icon} ${v.label}
+                      </button>
+                    `).join('')}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>`;
+      }
+    }
+    
+    window.app = new JLPTVocabApp();
+  </script>
+</body>
+</html>
