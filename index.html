@@ -152,9 +152,10 @@
           
           const { data, error } = await supabase
             .from('vocabulary_master')
-            .select('*')
+            .select('id, kanji, hiragana, meaning, level, page_no')
             .range(0, 4200) // This tells Supabase to fetch up to 4200 rows
             .order('id');
+          
           if (error) throw error;
           
           this.data = data.map(row => ({
