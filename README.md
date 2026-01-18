@@ -32,13 +32,13 @@ This guide will help you set up a complete JLPT vocabulary database (N1 + N2 + N
 │  │  id | week | day | week_day_label                          │ │
 │  │  1  | 1    | 1   | 1週1日                                   │ │
 │  │  2  | 1    | 2   | 1週2日                                   │ │
-│  │  ...                                                        │ │
+│  │  ...                                                       │ │
 │  └────────────────────────────────────────────────────────────┘ │
 │                           │                                      │
 │                           │ 1:many                               │
 │                           ▼                                      │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │                   vocabulary                                │ │
+│  │                   vocabulary                               │ │
 │  │  id | level | kanji | hiragana | meaning | example_before  │ │
 │  │     | example_after | hint | full_sentence | page_no       │ │
 │  │     | schedule_id | word_type | difficulty_level           │ │
