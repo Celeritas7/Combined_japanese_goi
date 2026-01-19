@@ -83,8 +83,8 @@
       constructor() {
         this.user = null;
         this.data = [];
-        this.markings = {};
-        this.selectedLevel = null; // null = show level selector
+        this.markings = {};  // Now keyed by kanji (text) instead of word_id (int)
+        this.selectedLevel = null;
         this.view = 'print-grid';
         this.searchTerm = '';
         this.filterWeek = null;
@@ -145,14 +145,11 @@
       }
       
       // ===== DATA LOADING FROM SUPABASE =====
-      // Fetches ALL rows by paginating through the data
       async loadVocabularyData() {
         try {
           this.syncing = true;
           this.render();
           
-          // Supabase has a default limit of 1000 rows
-          // We need to paginate to get all ~4200 rows
           let allData = [];
           let page = 0;
           const pageSize = 1000;
@@ -164,7 +161,7 @@
             
             const { data, error } = await supabase
               .from('vocabulary')
-              .select('*')  // Select all columns
+              .select('*')
               .range(from, to)
               .order('id');
             
@@ -173,7 +170,6 @@
             if (data && data.length > 0) {
               allData = allData.concat(data);
               page++;
-              // If we got less than pageSize, we've reached the end
               if (data.length < pageSize) {
                 hasMore = false;
               }
@@ -184,11 +180,8 @@
           
           console.log(`Loaded ${allData.length} vocabulary words`);
           
-          // Map the data with computed fields
-          // Handle both possible column names (meaning_en or meaning)
           this.data = allData.map(row => ({
             ...row,
-            // Normalize meaning field (could be meaning_en or meaning)
             meaning: row.meaning_en || row.meaning || '',
             weekDayLabel: getWeekDay(row.page_no).label,
             week: getWeekDay(row.page_no).week,
@@ -205,49 +198,55 @@
         }
       }
       
-      // ===== MARKINGS SYNC =====
+      // ===== MARKINGS SYNC (NOW USING KANJI) =====
       async syncMarkingsFromCloud() {
         if (!this.user) return;
         try {
           const { data, error } = await supabase
             .from('user_markings')
-            .select('word_id, marking')
+            .select('kanji, marking')  // Changed from word_id to kanji
             .eq('user_id', this.user.id);
           
           if (error) throw error;
           if (data) {
-            data.forEach(row => { this.markings[row.word_id] = row.marking; });
+            // Store markings by kanji (text key)
+            data.forEach(row => { this.markings[row.kanji] = row.marking; });
           }
+          console.log(`Loaded ${data?.length || 0} markings`);
           this.render();
         } catch (err) {
           console.error('Sync markings error:', err);
         }
       }
       
-      async updateMarking(wordId, marking) {
-        this.markings[wordId] = marking;
+      // Update marking using kanji as key
+      async updateMarking(kanji, marking) {
+        this.markings[kanji] = marking;
         this.render();
         
         if (!this.user) return;
         try {
           await supabase.from('user_markings').upsert({
             user_id: this.user.id,
-            word_id: wordId,
+            kanji: kanji,  // Changed from word_id to kanji
             marking: marking,
             updated_at: new Date().toISOString()
-          }, { onConflict: 'user_id,word_id' });
+          }, { onConflict: 'user_id,kanji' });  // Changed conflict key
         } catch (err) {
           console.error('Update marking error:', err);
         }
       }
       
+      // Helper to get marking for a word (by kanji)
+      getMarking(word) {
+        return this.markings[word.kanji] || 0;
+      }
+      
       // ===== FILTERING =====
       getFilteredData() {
         return this.data.filter(word => {
-          // Level filter
           if (this.selectedLevel && this.selectedLevel !== 'ALL' && word.level !== this.selectedLevel) return false;
           
-          // Search
           if (this.searchTerm) {
             const term = this.searchTerm.toLowerCase();
             const matches = (word.kanji || '').toLowerCase().includes(term) ||
@@ -257,12 +256,10 @@
             if (!matches) return false;
           }
           
-          // Week/Day filters
           if (this.filterWeek && word.week !== this.filterWeek) return false;
           if (this.filterDay && word.day !== this.filterDay) return false;
           
-          // Marking filter
-          const wordMarking = this.markings[word.id] || 0;
+          const wordMarking = this.getMarking(word);
           if (this.filterMarking !== null && wordMarking !== this.filterMarking) return false;
           if (this.showMarkedOnly && wordMarking === 0) return false;
           
@@ -286,7 +283,7 @@
         Object.keys(MARKING_CATEGORIES).forEach(k => stats.byMark[k] = 0);
         
         filtered.forEach(w => {
-          const m = this.markings[w.id] || 0;
+          const m = this.getMarking(w);
           stats.byMark[m]++;
           if (m > 0) stats.marked++;
         });
@@ -573,9 +570,9 @@
                         ${[0,1,2,3].map(ci => {
                           const w = words[ri * 4 + ci];
                           if (!w) return '<td class="border p-2"></td>';
-                          const m = this.markings[w.id] || 0;
+                          const m = this.getMarking(w);
                           const mc = MARKING_CATEGORIES[m];
-                          return `<td class="border p-2 cursor-pointer hover:bg-slate-100 ${m > 0 ? mc.color : ''}" onclick="app.selectedWord = app.data.find(x => x.id === ${w.id}); app.render();">${w.kanji || w.raw}</td>`;
+                          return `<td class="border p-2 cursor-pointer hover:bg-slate-100 ${m > 0 ? mc.color : ''}" onclick="app.selectedWord = app.data.find(x => x.kanji === '${w.kanji.replace(/'/g, "\\'")}'); app.render();">${w.kanji || w.raw}</td>`;
                         }).join('')}
                       </tr>
                     `).join('');
@@ -603,10 +600,10 @@
               </thead>
               <tbody>
                 ${data.slice(0, 200).map((w, i) => {
-                  const m = this.markings[w.id] || 0;
+                  const m = this.getMarking(w);
                   const mc = MARKING_CATEGORIES[m];
                   return `
-                    <tr class="${i % 2 ? 'bg-slate-50' : ''} ${m > 0 ? mc.color : ''} cursor-pointer hover:bg-slate-100" onclick="app.selectedWord = app.data.find(x => x.id === ${w.id}); app.render();">
+                    <tr class="${i % 2 ? 'bg-slate-50' : ''} ${m > 0 ? mc.color : ''} cursor-pointer hover:bg-slate-100" onclick="app.selectedWord = app.data.find(x => x.kanji === '${w.kanji.replace(/'/g, "\\'")}'); app.render();">
                       <td class="border p-2 text-xs text-center">${w.weekDayLabel}</td>
                       <td class="border p-2 text-sm text-gray-600">${w.example_before || w.supporting_word_1 || ''}</td>
                       <td class="border p-3 text-center text-2xl font-bold">${w.kanji || w.raw}</td>
@@ -625,11 +622,12 @@
         
         return `<div class="space-y-2">
           ${data.slice(0, 100).map(w => {
-            const m = this.markings[w.id] || 0;
+            const m = this.getMarking(w);
             const mc = MARKING_CATEGORIES[m];
             const lc = LEVEL_COLORS[w.level] || LEVEL_COLORS['ALL'];
+            const kanjiEscaped = (w.kanji || '').replace(/'/g, "\\'");
             return `
-              <div class="p-3 rounded-xl border-2 ${mc.border} ${mc.color} cursor-pointer hover:shadow-md" onclick="app.selectedWord = app.data.find(x => x.id === ${w.id}); app.render();">
+              <div class="p-3 rounded-xl border-2 ${mc.border} ${mc.color} cursor-pointer hover:shadow-md" onclick="app.selectedWord = app.data.find(x => x.kanji === '${kanjiEscaped}'); app.render();">
                 <div class="flex items-start justify-between gap-2">
                   <div class="flex-1">
                     <div class="flex items-center gap-2 mb-1 flex-wrap">
@@ -641,7 +639,7 @@
                   </div>
                   <div class="flex gap-1">
                     ${[1,2,3,4,5].map(mk => `
-                      <button onclick="event.stopPropagation(); app.updateMarking(${w.id}, ${m === mk ? 0 : mk});" class="w-7 h-7 rounded-lg flex items-center justify-center text-sm ${m === mk ? MARKING_CATEGORIES[mk].color + ' ring-2 ring-gray-400' : 'bg-white/50 hover:bg-white'}">
+                      <button onclick="event.stopPropagation(); app.updateMarking('${kanjiEscaped}', ${m === mk ? 0 : mk});" class="w-7 h-7 rounded-lg flex items-center justify-center text-sm ${m === mk ? MARKING_CATEGORIES[mk].color + ' ring-2 ring-gray-400' : 'bg-white/50 hover:bg-white'}">
                         ${MARKING_CATEGORIES[mk].icon}
                       </button>
                     `).join('')}
@@ -658,9 +656,10 @@
         
         if (this.flashcardIndex >= data.length) this.flashcardIndex = 0;
         const w = data[this.flashcardIndex];
-        const m = this.markings[w.id] || 0;
+        const m = this.getMarking(w);
         const mc = MARKING_CATEGORIES[m];
         const lc = LEVEL_COLORS[w.level] || LEVEL_COLORS['ALL'];
+        const kanjiEscaped = (w.kanji || '').replace(/'/g, "\\'");
         
         return `
           <div class="max-w-lg mx-auto">
@@ -671,7 +670,7 @@
                 <span class="px-2 py-1 ${lc.bg} text-white text-xs rounded-full">${w.level}</span>
                 <div class="flex gap-1">
                   ${[1,2,3,4,5].map(mk => `
-                    <button onclick="event.stopPropagation(); app.updateMarking(${w.id}, ${m === mk ? 0 : mk});" class="w-8 h-8 rounded-xl ${m === mk ? MARKING_CATEGORIES[mk].color + ' ring-2 ring-gray-400' : 'bg-gray-100 hover:bg-gray-200'}">
+                    <button onclick="event.stopPropagation(); app.updateMarking('${kanjiEscaped}', ${m === mk ? 0 : mk});" class="w-8 h-8 rounded-xl ${m === mk ? MARKING_CATEGORIES[mk].color + ' ring-2 ring-gray-400' : 'bg-gray-100 hover:bg-gray-200'}">
                       ${MARKING_CATEGORIES[mk].icon}
                     </button>
                   `).join('')}
@@ -703,9 +702,10 @@
       
       renderWordModal() {
         const w = this.selectedWord;
-        const m = this.markings[w.id] || 0;
+        const m = this.getMarking(w);
         const mc = MARKING_CATEGORIES[m];
         const lc = LEVEL_COLORS[w.level] || LEVEL_COLORS['ALL'];
+        const kanjiEscaped = (w.kanji || '').replace(/'/g, "\\'");
         
         return `
           <div class="fixed inset-0 bg-black/50 flex items-end md:items-center justify-center z-50 p-0 md:p-4 no-print" onclick="app.selectedWord = null; app.render();">
@@ -736,7 +736,7 @@
                   <h3 class="text-sm font-medium text-gray-500 mb-2">Mark as</h3>
                   <div class="grid grid-cols-2 gap-2">
                     ${Object.entries(MARKING_CATEGORIES).map(([k, v]) => `
-                      <button onclick="app.updateMarking(${w.id}, ${parseInt(k)}); app.selectedWord = app.data.find(x => x.id === ${w.id});" class="p-2.5 rounded-xl text-left text-sm ${m === parseInt(k) ? v.color + ' ring-2 ring-gray-400' : 'bg-gray-100 hover:bg-gray-200'}">
+                      <button onclick="app.updateMarking('${kanjiEscaped}', ${parseInt(k)}); app.selectedWord = app.data.find(x => x.kanji === '${kanjiEscaped}');" class="p-2.5 rounded-xl text-left text-sm ${m === parseInt(k) ? v.color + ' ring-2 ring-gray-400' : 'bg-gray-100 hover:bg-gray-200'}">
                         ${v.icon} ${v.label}
                       </button>
                     `).join('')}

@@ -145,21 +145,51 @@
       }
       
       // ===== DATA LOADING FROM SUPABASE =====
+      // Fetches ALL rows by paginating through the data
       async loadVocabularyData() {
         try {
           this.syncing = true;
           this.render();
           
-          const { data, error } = await supabase
-            .from('vocabulary_master')
-            .select('id, kanji, hiragana, meaning, level, page_no')
-            .range(0, 4200) // This tells Supabase to fetch up to 4200 rows
-            .order('id');
+          // Supabase has a default limit of 1000 rows
+          // We need to paginate to get all ~4200 rows
+          let allData = [];
+          let page = 0;
+          const pageSize = 1000;
+          let hasMore = true;
           
-          if (error) throw error;
+          while (hasMore) {
+            const from = page * pageSize;
+            const to = from + pageSize - 1;
+            
+            const { data, error } = await supabase
+              .from('vocabulary')
+              .select('*')  // Select all columns
+              .range(from, to)
+              .order('id');
+            
+            if (error) throw error;
+            
+            if (data && data.length > 0) {
+              allData = allData.concat(data);
+              page++;
+              // If we got less than pageSize, we've reached the end
+              if (data.length < pageSize) {
+                hasMore = false;
+              }
+            } else {
+              hasMore = false;
+            }
+          }
           
-          this.data = data.map(row => ({
+          console.log(`Loaded ${allData.length} vocabulary words`);
+          
+          // Map the data with computed fields
+          // Handle both possible column names (meaning_en or meaning)
+          this.data = allData.map(row => ({
             ...row,
+            // Normalize meaning field (could be meaning_en or meaning)
+            meaning: row.meaning_en || row.meaning || '',
             weekDayLabel: getWeekDay(row.page_no).label,
             week: getWeekDay(row.page_no).week,
             day: getWeekDay(row.page_no).day,
@@ -578,10 +608,10 @@
                   return `
                     <tr class="${i % 2 ? 'bg-slate-50' : ''} ${m > 0 ? mc.color : ''} cursor-pointer hover:bg-slate-100" onclick="app.selectedWord = app.data.find(x => x.id === ${w.id}); app.render();">
                       <td class="border p-2 text-xs text-center">${w.weekDayLabel}</td>
-                      <td class="border p-2 text-sm text-gray-600">${w.supporting_word_1 || ''}</td>
+                      <td class="border p-2 text-sm text-gray-600">${w.example_before || w.supporting_word_1 || ''}</td>
                       <td class="border p-3 text-center text-2xl font-bold">${w.kanji || w.raw}</td>
-                      <td class="border p-2 text-sm text-gray-600">${w.supporting_word_2 || ''}</td>
-                      <td class="border p-2 text-sm">${w.meaning || ''}</td>
+                      <td class="border p-2 text-sm text-gray-600">${w.example_after || w.supporting_word_2 || ''}</td>
+                      <td class="border p-2 text-sm">${w.meaning || w.meaning_en || ''}</td>
                     </tr>`;
                 }).join('')}
               </tbody>
@@ -597,7 +627,7 @@
           ${data.slice(0, 100).map(w => {
             const m = this.markings[w.id] || 0;
             const mc = MARKING_CATEGORIES[m];
-            const lc = LEVEL_COLORS[w.level];
+            const lc = LEVEL_COLORS[w.level] || LEVEL_COLORS['ALL'];
             return `
               <div class="p-3 rounded-xl border-2 ${mc.border} ${mc.color} cursor-pointer hover:shadow-md" onclick="app.selectedWord = app.data.find(x => x.id === ${w.id}); app.render();">
                 <div class="flex items-start justify-between gap-2">
@@ -607,7 +637,7 @@
                       <span class="text-xl font-bold">${w.kanji || w.raw}</span>
                       <span class="text-gray-600">${w.hiragana || ''}</span>
                     </div>
-                    <p class="text-sm text-gray-700 truncate">${w.meaning || ''}</p>
+                    <p class="text-sm text-gray-700 truncate">${w.meaning || w.meaning_en || ''}</p>
                   </div>
                   <div class="flex gap-1">
                     ${[1,2,3,4,5].map(mk => `
@@ -630,6 +660,7 @@
         const w = data[this.flashcardIndex];
         const m = this.markings[w.id] || 0;
         const mc = MARKING_CATEGORIES[m];
+        const lc = LEVEL_COLORS[w.level] || LEVEL_COLORS['ALL'];
         
         return `
           <div class="max-w-lg mx-auto">
@@ -637,7 +668,7 @@
             
             <div class="min-h-[320px] p-6 rounded-3xl border-2 ${mc.border} bg-white shadow-xl cursor-pointer" onclick="app.flashcardRevealed = !app.flashcardRevealed; app.render();">
               <div class="flex justify-between mb-4">
-                <span class="px-2 py-1 ${LEVEL_COLORS[w.level].bg} text-white text-xs rounded-full">${w.level}</span>
+                <span class="px-2 py-1 ${lc.bg} text-white text-xs rounded-full">${w.level}</span>
                 <div class="flex gap-1">
                   ${[1,2,3,4,5].map(mk => `
                     <button onclick="event.stopPropagation(); app.updateMarking(${w.id}, ${m === mk ? 0 : mk});" class="w-8 h-8 rounded-xl ${m === mk ? MARKING_CATEGORIES[mk].color + ' ring-2 ring-gray-400' : 'bg-gray-100 hover:bg-gray-200'}">
@@ -648,14 +679,14 @@
               </div>
               
               <div class="text-center py-6">
-                ${w.supporting_word_1 ? `<p class="text-gray-400 mb-2">${w.supporting_word_1}</p>` : ''}
+                ${w.example_before || w.supporting_word_1 ? `<p class="text-gray-400 mb-2">${w.example_before || w.supporting_word_1}</p>` : ''}
                 <h2 class="text-5xl font-bold mb-2">${w.kanji || w.raw}</h2>
-                ${w.supporting_word_2 ? `<p class="text-gray-400">${w.supporting_word_2}</p>` : ''}
+                ${w.example_after || w.supporting_word_2 ? `<p class="text-gray-400">${w.example_after || w.supporting_word_2}</p>` : ''}
                 
                 ${this.flashcardRevealed ? `
                   <div class="mt-6 pt-6 border-t-2 border-dashed animate-fadeIn">
                     <p class="text-xl text-gray-600 mb-2">${w.hiragana || ''}</p>
-                    <p class="text-lg">${w.meaning || ''}</p>
+                    <p class="text-lg">${w.meaning || w.meaning_en || ''}</p>
                     ${w.hint ? `<p class="mt-3 text-gray-500 text-sm">💡 ${w.hint}</p>` : ''}
                   </div>
                 ` : '<p class="text-gray-400 mt-6">Tap to reveal</p>'}
@@ -674,7 +705,7 @@
         const w = this.selectedWord;
         const m = this.markings[w.id] || 0;
         const mc = MARKING_CATEGORIES[m];
-        const lc = LEVEL_COLORS[w.level];
+        const lc = LEVEL_COLORS[w.level] || LEVEL_COLORS['ALL'];
         
         return `
           <div class="fixed inset-0 bg-black/50 flex items-end md:items-center justify-center z-50 p-0 md:p-4 no-print" onclick="app.selectedWord = null; app.render();">
@@ -696,10 +727,10 @@
               <div class="p-5 space-y-4">
                 <div>
                   <h3 class="text-sm font-medium text-gray-500 mb-1">Meaning</h3>
-                  <p>${w.meaning || '-'}</p>
+                  <p>${w.meaning || w.meaning_en || '-'}</p>
                 </div>
                 ${w.hint ? `<div><h3 class="text-sm font-medium text-gray-500 mb-1">Hint</h3><p>💡 ${w.hint}</p></div>` : ''}
-                ${w.sentence ? `<div><h3 class="text-sm font-medium text-gray-500 mb-1">Example</h3><p class="p-3 bg-slate-50 rounded-xl">📝 ${w.sentence}</p></div>` : ''}
+                ${w.full_sentence ? `<div><h3 class="text-sm font-medium text-gray-500 mb-1">Example</h3><p class="p-3 bg-slate-50 rounded-xl">📝 ${w.full_sentence}</p></div>` : ''}
                 
                 <div>
                   <h3 class="text-sm font-medium text-gray-500 mb-2">Mark as</h3>
