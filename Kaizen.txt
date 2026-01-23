@@ -1,8 +1,10 @@
 Want the printout page corrections
-1. When the text is lengthy ts font should get reduced so that the row height will be the same.
-2. The column width of the week number is perfect but other 4 columsn should have to be in equal width.
+1. When the text is lengthy the font should get reduced so that the row height will be the same.
+2. The column width of the week number is perfect but other 4 column should have to be in equal width.
 
 
 
 
 Want the N1 goi page with the inbuild csv file in that folder and same for N3 goi file. It is causing issue when I login and try to study.
+
+
